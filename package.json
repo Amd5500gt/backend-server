@@ -1,7 +1,7 @@
 {
   "name": "video-downloader-server",
-  "version": "4.0.0",
-  "description": "Real YouTube & Instagram downloader with itag 18",
+  "version": "6.0.0",
+  "description": "Real YouTube & Instagram downloader with actual file downloads",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,9 @@
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "ytdl-core": "^4.11.5",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "instagram-url-direct": "^1.0.6"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

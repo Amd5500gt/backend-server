@@ -2,32 +2,38 @@ const express = require("express");
 const cors = require("cors");
 const ytdl = require("ytdl-core");
 const axios = require("axios");
+const ffmpeg = require("fluent-ffmpeg");
 const { fromUrl } = require("instagram-url-direct");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Disable YouTube update check
-process.env.YTDL_NO_UPDATE = 'true';
-
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use('/downloads', express.static('downloads'));
+
+// Create downloads directory
+if (!fs.existsSync('downloads')) {
+  fs.mkdirSync('downloads');
+}
 
 // Health check
 app.get("/", (req, res) => {
   res.json({ 
-    message: "🚀 REAL Video Downloader - 100% Working",
+    message: "🚀 REAL Video Downloader - Like SnapTube",
     status: "OK",
-    features: ["Real YouTube Downloads", "Real Instagram Downloads", "MP4/MP3"],
+    features: ["Real File Downloads", "YouTube MP4/MP3", "Instagram Videos"],
     timestamp: new Date().toISOString()
   });
 });
 
 // =============================
-// 🎯 REAL YOUTUBE DOWNLOAD
+// 🎯 REAL YOUTUBE DOWNLOAD WITH FILE CREATION
 // =============================
-const downloadYouTube = async (url, format) => {
+const downloadYouTubeVideo = async (url, format, quality) => {
   try {
     // Fix YouTube URL
     let youtubeUrl = url;
@@ -36,201 +42,147 @@ const downloadYouTube = async (url, format) => {
       youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     }
 
-    // Validate URL
     if (!ytdl.validateURL(youtubeUrl)) {
       throw new Error("Invalid YouTube URL");
     }
 
-    // Get video info
     const info = await ytdl.getInfo(youtubeUrl);
     const details = info.videoDetails;
 
-    if (!details) {
-      throw new Error("Video not found");
-    }
-
-    // Generate filename
+    // Generate safe filename
     const safeTitle = details.title.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 50);
     const timestamp = Date.now();
-    
-    let downloadUrl;
-    let filename;
+    const filename = `${safeTitle}_${timestamp}.${format === 'mp3' ? 'mp3' : 'mp4'}`;
+    const filePath = path.join(__dirname, 'downloads', filename);
 
-    if (format === "mp3") {
-      // Get audio URL
-      const audioFormat = ytdl.chooseFormat(info.formats, { 
-        filter: "audioonly",
-        quality: "highestaudio" 
-      });
-      
-      if (!audioFormat) {
-        throw new Error("No audio format available");
-      }
-      
-      filename = `${safeTitle}_${timestamp}.mp3`;
-      downloadUrl = audioFormat.url;
-      
-    } else {
-      // Get video URL - using itag 18 for stability
-      const videoFormat = ytdl.chooseFormat(info.formats, { 
-        quality: '18' // 360p - most stable
-      });
-      
-      if (!videoFormat) {
-        // Fallback to any available format
-        const fallbackFormat = ytdl.chooseFormat(info.formats, { 
-          quality: 'highest' 
+    return new Promise((resolve, reject) => {
+      if (format === 'mp3') {
+        // Download as MP3
+        const audioStream = ytdl(youtubeUrl, { 
+          filter: 'audioonly',
+          quality: 'highestaudio'
         });
-        downloadUrl = fallbackFormat.url;
-      } else {
-        downloadUrl = videoFormat.url;
-      }
-      
-      filename = `${safeTitle}_${timestamp}.mp4`;
-    }
 
-    return {
-      success: true,
-      platform: "youtube",
-      downloadUrl: downloadUrl,
-      filename: filename,
-      title: details.title,
-      format: format,
-      quality: format === "mp3" ? "128kbps" : "360p",
-      message: "YouTube download ready!"
-    };
+        ffmpeg(audioStream)
+          .audioBitrate(128)
+          .toFormat('mp3')
+          .on('error', (err) => {
+            reject(new Error(`MP3 conversion failed: ${err.message}`));
+          })
+          .on('end', () => {
+            resolve({
+              success: true,
+              downloadUrl: `/downloads/${filename}`,
+              filename: filename,
+              title: details.title,
+              format: 'mp3',
+              quality: '128kbps',
+              message: "MP3 download ready!"
+            });
+          })
+          .save(filePath);
+
+      } else {
+        // Download as MP4
+        let itag;
+        switch (quality) {
+          case '720p': itag = 22; break;
+          case '480p': itag = 18; break;
+          case '360p': itag = 18; break;
+          default: itag = 18;
+        }
+
+        const videoStream = ytdl(youtubeUrl, { quality: itag });
+        const writeStream = fs.createWriteStream(filePath);
+
+        videoStream.pipe(writeStream);
+
+        writeStream.on('finish', () => {
+          resolve({
+            success: true,
+            downloadUrl: `/downloads/${filename}`,
+            filename: filename,
+            title: details.title,
+            format: 'mp4',
+            quality: quality,
+            message: "MP4 download ready!"
+          });
+        });
+
+        writeStream.on('error', (err) => {
+          reject(new Error(`Video download failed: ${err.message}`));
+        });
+      }
+    });
 
   } catch (error) {
-    console.log("YouTube download error:", error.message);
-    throw new Error(`YouTube: ${error.message}`);
+    throw new Error(`YouTube download failed: ${error.message}`);
   }
 };
 
 // =============================
-// 🎯 REAL INSTAGRAM DOWNLOAD
+// 🎯 REAL INSTAGRAM DOWNLOAD WITH FILE CREATION
 // =============================
-const downloadInstagram = async (url, format) => {
+const downloadInstagramVideo = async (url, format) => {
   try {
     console.log("🔍 Downloading Instagram video...");
     
-    // Method 1: Using instagram-url-direct package
-    try {
-      const result = await fromUrl(url);
-      
-      if (!result || !result.url_list || result.url_list.length === 0) {
-        throw new Error("No video found");
-      }
-
-      const videoUrl = result.url_list[0];
-      const filename = `instagram_${Date.now()}.mp4`;
-
-      console.log("✅ Instagram video URL found:", videoUrl);
-
-      return {
-        success: true,
-        platform: "instagram",
-        downloadUrl: videoUrl,
-        filename: filename,
-        title: "Instagram Video",
-        format: "mp4",
-        quality: "HD",
-        message: "Instagram download ready!"
-      };
-      
-    } catch (packageError) {
-      console.log("Package method failed:", packageError.message);
+    const result = await fromUrl(url);
+    
+    if (!result || !result.url_list || result.url_list.length === 0) {
+      throw new Error("No video found on Instagram");
     }
 
-    // Method 2: Using public API
-    try {
-      const apiUrl = `https://instagram-downloader-download-instagram-videos-stories.p.rapidapi.com/index?url=${encodeURIComponent(url)}`;
-      
-      const response = await axios.get(apiUrl, {
-        headers: {
-          'X-RapidAPI-Key': 'd3f47f2e3bmsh8b9a4b4b4b4b4b4p123456jsn123456789012', // Free key
-          'X-RapidAPI-Host': 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com'
-        },
-        timeout: 15000
-      });
+    const videoUrl = result.url_list[0];
+    const timestamp = Date.now();
+    const filename = `instagram_${timestamp}.mp4`;
+    const filePath = path.join(__dirname, 'downloads', filename);
 
-      if (response.data && response.data.media) {
-        const filename = `instagram_${Date.now()}.mp4`;
-        
-        return {
-          success: true,
-          platform: "instagram",
-          downloadUrl: response.data.media,
-          filename: filename,
-          title: "Instagram Video",
-          format: "mp4",
-          quality: "HD",
-          message: "Instagram download ready!"
-        };
-      }
-    } catch (apiError) {
-      console.log("API method failed:", apiError.message);
-    }
+    return new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(filePath);
+      
+      axios({
+        method: 'GET',
+        url: videoUrl,
+        responseType: 'stream'
+      })
+      .then(response => {
+        response.data.pipe(writeStream);
 
-    // Method 3: Direct page scraping
-    try {
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        },
-        timeout: 10000
-      });
-      
-      const html = response.data;
-      
-      // Try multiple patterns to find video URL
-      const patterns = [
-        /"video_url":"([^"]+)"/,
-        /"contentUrl":"([^"]+)"/,
-        /property="og:video" content="([^"]+)"/,
-        /<video[^>]+src="([^"]+)"/,
-      ];
-      
-      for (let pattern of patterns) {
-        const match = html.match(pattern);
-        if (match && match[1]) {
-          let videoUrl = match[1].replace(/\\u0026/g, '&');
-          const filename = `instagram_${Date.now()}.mp4`;
-          
-          return {
+        writeStream.on('finish', () => {
+          resolve({
             success: true,
-            platform: "instagram",
-            downloadUrl: videoUrl,
+            downloadUrl: `/downloads/${filename}`,
             filename: filename,
             title: "Instagram Video",
-            format: "mp4",
-            quality: "HD",
+            format: 'mp4',
+            quality: 'HD',
             message: "Instagram download ready!"
-          };
-        }
-      }
-      
-      throw new Error("No video URL found in page source");
-      
-    } catch (scrapeError) {
-      console.log("Scraping method failed:", scrapeError.message);
-    }
+          });
+        });
 
-    throw new Error("All Instagram methods failed");
+        writeStream.on('error', (err) => {
+          reject(new Error(`Instagram download failed: ${err.message}`));
+        });
+      })
+      .catch(err => {
+        reject(new Error(`Instagram fetch failed: ${err.message}`));
+      });
+    });
 
   } catch (error) {
-    console.log("Instagram download error:", error.message);
-    throw new Error(`Instagram: ${error.message}`);
+    throw new Error(`Instagram download failed: ${error.message}`);
   }
 };
 
 // =============================
-// 🎯 MAIN DOWNLOAD ENDPOINT
+// 🎯 MAIN DOWNLOAD ENDPOINT - CREATES ACTUAL FILES
 // =============================
 app.post("/api/download", async (req, res) => {
   try {
-    const { url, format, platform } = req.body;
+    const { url, format, platform, quality } = req.body;
 
-    console.log(`📥 REAL Download Request: ${platform}, ${format}`);
+    console.log(`📥 REAL Download: ${platform}, ${format}, ${quality}`);
 
     if (!url || !platform) {
       return res.json({ 
@@ -242,9 +194,9 @@ app.post("/api/download", async (req, res) => {
     let result;
 
     if (platform === "youtube") {
-      result = await downloadYouTube(url, format);
+      result = await downloadYouTubeVideo(url, format, quality);
     } else if (platform === "instagram") {
-      result = await downloadInstagram(url, format);
+      result = await downloadInstagramVideo(url, format);
     } else {
       return res.json({ 
         success: false, 
@@ -252,10 +204,13 @@ app.post("/api/download", async (req, res) => {
       });
     }
 
+    // Add server URL to download path
+    result.downloadUrl = `https://${req.get('host')}${result.downloadUrl}`;
+    
     res.json(result);
 
   } catch (error) {
-    console.error("❌ Download endpoint error:", error.message);
+    console.error("❌ Download error:", error.message);
     res.json({ 
       success: false, 
       error: error.message 
@@ -270,7 +225,7 @@ app.post("/api/video-info", async (req, res) => {
   try {
     const { url } = req.body;
     
-    console.log("📥 Video Info Request:", url);
+    console.log("📥 Video Info:", url);
 
     if (!url) {
       return res.json({ success: false, error: "URL is required" });
@@ -314,7 +269,6 @@ app.post("/api/video-info", async (req, res) => {
         });
 
       } catch (youtubeError) {
-        console.log("YouTube info error:", youtubeError.message);
         return res.json({ 
           success: false, 
           error: "YouTube video not available" 
@@ -354,7 +308,6 @@ app.post("/api/video-info", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Video info error:", error);
     return res.json({ 
       success: false, 
       error: "Failed to get video information" 
@@ -368,46 +321,15 @@ app.post("/api/video-info", async (req, res) => {
 app.get("/api/test", (req, res) => {
   res.json({ 
     success: true,
-    message: "✅ REAL Downloader is 100% Working!",
+    message: "✅ REAL Downloader is Working!",
     features: [
-      "YouTube MP4 Downloads - REAL",
-      "YouTube MP3 Downloads - REAL", 
-      "Instagram Downloads - REAL",
-      "Direct Download URLs",
-      "No Streaming - Direct Files"
-    ],
-    test_urls: {
-      youtube: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      instagram: "https://www.instagram.com/reel/Cx9JtVtMQAQ/"
-    }
+      "Actual File Downloads",
+      "YouTube MP4 Downloads",
+      "YouTube MP3 Conversions", 
+      "Instagram Video Downloads",
+      "Like SnapTube - Real Files"
+    ]
   });
-});
-
-// =============================
-// 🎯 DIRECT STREAM ENDPOINT (For large files)
-// =============================
-app.get("/api/stream", async (req, res) => {
-  try {
-    const { url, platform } = req.query;
-    
-    if (platform === "youtube") {
-      res.setHeader('Content-Disposition', 'attachment');
-      ytdl(url).pipe(res);
-    } else if (platform === "instagram") {
-      const response = await axios({
-        method: 'GET',
-        url: url,
-        responseType: 'stream'
-      });
-      res.setHeader('Content-Disposition', 'attachment');
-      response.data.pipe(res);
-    } else {
-      res.status(400).send("Invalid platform");
-    }
-  } catch (error) {
-    console.error("Stream error:", error);
-    res.status(500).send("Streaming failed");
-  }
 });
 
 // Error handling
@@ -419,21 +341,12 @@ app.use((error, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use("*", (req, res) => {
-  res.status(404).json({ 
-    success: false,
-    error: "Endpoint not found" 
-  });
-});
-
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 REAL DOWNLOADER Server running on port ${PORT}`);
+  console.log(`🚀 REAL FILE DOWNLOADER Server running on port ${PORT}`);
   console.log(`📍 Local: http://localhost:${PORT}`);
   console.log(`🌐 Render: https://downloder-server-js.onrender.com`);
-  console.log(`🎯 YouTube: ✅ 100% REAL Downloads`);
-  console.log(`📷 Instagram: ✅ 100% REAL Downloads`);
-  console.log(`⚡ Status: FULLY WORKING`);
-  console.log(`🔧 Methods: Direct URL Extraction`);
+  console.log(`🎯 YouTube: ✅ REAL File Downloads`);
+  console.log(`📷 Instagram: ✅ REAL File Downloads`);
+  console.log(`💾 Files: ✅ Saved on Server`);
 });

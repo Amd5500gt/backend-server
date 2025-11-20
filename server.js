@@ -436,4 +436,4 @@ app.listen(PORT, () => {
   console.log(`📷 Instagram: ✅ 100% REAL Downloads`);
   console.log(`⚡ Status: FULLY WORKING`);
   console.log(`🔧 Methods: Direct URL Extraction`);
-}); 
+});

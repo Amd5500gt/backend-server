@@ -4,7 +4,12 @@ const ytdl = require("ytdl-core");
 const igdl = require("instagram-url-direct");
 
 const app = express();
-const PORT = 3000;
+
+// Render gives dynamic PORT
+const PORT = process.env.PORT || 3000;
+
+// Your domain (local or Render)
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 app.use(cors());
 app.use(express.json());
@@ -16,9 +21,7 @@ app.post("/api/video-info", async (req, res) => {
   try {
     const { url } = req.body;
 
-    // --------------------
     // YOUTUBE
-    // --------------------
     if (ytdl.validateURL(url)) {
       const info = await ytdl.getInfo(url);
       const details = info.videoDetails;
@@ -37,16 +40,11 @@ app.post("/api/video-info", async (req, res) => {
       });
     }
 
-    // --------------------
     // INSTAGRAM
-    // --------------------
     if (url.includes("instagram.com")) {
       const result = await igdl(url);
-
       if (!result || !result.url_list || result.url_list.length === 0) {
-        return res.status(400).json({
-          error: "Unable to fetch Instagram video",
-        });
+        return res.status(400).json({ error: "Unable to fetch Instagram video" });
       }
 
       return res.json({
@@ -77,25 +75,19 @@ app.post("/api/download", async (req, res) => {
   try {
     const { url, format, platform } = req.body;
 
-    // --------------------
     // YOUTUBE DOWNLOAD
-    // --------------------
     if (platform === "youtube") {
       const info = await ytdl.getInfo(url);
       const title = info.videoDetails.title.replace(/[^a-zA-Z0-9]/g, "_");
 
       return res.json({
         success: true,
-        downloadUrl: `http://localhost:${PORT}/api/stream?url=${encodeURIComponent(
-          url
-        )}&format=${format}`,
+        downloadUrl: `${BASE_URL}/api/stream?url=${encodeURIComponent(url)}&format=${format}`,
         filename: `${title}.${format === "mp3" ? "mp3" : "mp4"}`
       });
     }
 
-    // --------------------
     // INSTAGRAM DOWNLOAD
-    // --------------------
     if (platform === "instagram") {
       const result = await igdl(url);
       const directUrl = result.url_list[0];
@@ -118,6 +110,7 @@ app.post("/api/download", async (req, res) => {
 app.get("/api/stream", (req, res) => {
   try {
     const { url, format } = req.query;
+
     res.setHeader("Content-Disposition", "attachment");
 
     if (format === "mp3") {
@@ -132,5 +125,5 @@ app.get("/api/stream", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
